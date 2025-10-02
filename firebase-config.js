@@ -7,8 +7,6 @@
 // 3) Ensure databaseURL is present (Realtime Database URL like
 //    https://your-project-id-default-rtdb.firebaseio.com)
 
-// --- Option A (recommended): Paste your config object here and UNCOMMENT ---
-
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyCLmffn14gf4jhNIq-lTOvenQ20lI7ean8",
   authDomain: "buzzer-1112a.firebaseapp.com",
@@ -20,7 +18,6 @@ window.FIREBASE_CONFIG = {
 };
 
 
-// --- Option B: If you paste "const firebaseConfig = { ... }" from Firebase docs ---
 // This block will export it to the expected global window.FIREBASE_CONFIG
 // so the rest of the app can find it without you renaming anything.
 (function(){

@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Buzzer Host</title>
+  <style>
+    :root{ --bg:#0f172a; --panel:#111827; --muted:#94a3b8; --fg:#e5e7eb; --btn:#1f2937; --good:#22c55e; --warn:#f59e0b; --bad:#ef4444; }
+    html,body{height:100%}
+    body{margin:0; font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#0b1220; color:var(--fg); display:flex; flex-direction:column}
+    header{position:sticky; top:0; z-index:10; background:#0b1220ee; backdrop-filter: blur(6px); border-bottom:1px solid #22304a; padding:10px}
+    .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+    .brand{font-weight:800; letter-spacing:0.4px}
+    .spacer{flex:1}
+    input,button{border:0; border-radius:10px; padding:10px 12px; background:var(--btn); color:var(--fg)}
+    input{min-width:160px}
+    button{font-weight:700}
+    .primary{background:#0ea5e9; color:white}
+    .good{background:var(--good); color:#052e13}
+    .warn{background:var(--warn); color:#1a1203}
+    .danger{background:var(--bad); color:white}
+    .chip{background:#1f2937; border:1px solid #2a3a55; padding:6px 10px; border-radius:999px; font-weight:700}
+    main{padding:12px; display:grid; gap:12px}
+    .card{background:var(--panel); border:1px solid #24364f; border-radius:14px; padding:12px}
+    .list{display:grid; gap:8px}
+    .item{display:flex; align-items:center; gap:10px; background:#0f1a2b; border:1px solid #20324c; padding:8px 10px; border-radius:12px}
+    .idx{width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:900; background:#13243a}
+    .meta{color:var(--muted); font-size:12px}
+    .status{font-weight:800}
+    .mono{font-family: ui-monospace, Menlo, Consolas, monospace}
+    .small{font-size:12px; color:var(--muted)}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="row">
+      <div class="brand">Buzzer Host</div>
+      <div class="spacer"></div>
+      <div id="status" class="chip">Disconnected</div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label class="small" for="roomInput">Room</label>
+      <input id="roomInput" placeholder="e.g. QUIZ1" />
+      <button id="joinBtn" class="primary">Create / Join</button>
+      <div class="spacer"></div>
+      <button id="startBtn" class="good" disabled>Start round</button>
+      <button id="stopBtn" class="warn" disabled>Stop</button>
+      <button id="clearBtn" class="danger" disabled>Clear</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="card">
+      <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:baseline">
+        <div>Room: <span id="roomLabel" class="mono">—</span></div>
+        <div>Round: <span id="roundStatus" class="status">—</span></div>
+        <div>Started: <span id="roundStart" class="mono small">—</span></div>
+      </div>
+      <div style="margin-top:8px" class="small">Team link: <span id="teamLink" class="mono">—</span></div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+        <div>Order of buzzes</div>
+        <div class="small">Delta from start</div>
+      </div>
+      <div id="list" class="list"></div>
+    </div>
+
+    <div class="card small">
+      Share the team link above. Teams choose their own names and have white buttons. Start a round to enable buzzers.
+    </div>
+  </main>
+
+  <script src="firebase-config.js"></script>
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+    import { getDatabase, ref, set, update, onValue, remove, onDisconnect, serverTimestamp, get } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js';
+
+    const ui = {
+      status: document.getElementById('status'),
+      roomInput: document.getElementById('roomInput'),
+      joinBtn: document.getElementById('joinBtn'),
+      startBtn: document.getElementById('startBtn'),
+      stopBtn: document.getElementById('stopBtn'),
+      clearBtn: document.getElementById('clearBtn'),
+      roomLabel: document.getElementById('roomLabel'),
+      roundStatus: document.getElementById('roundStatus'),
+      roundStart: document.getElementById('roundStart'),
+      teamLink: document.getElementById('teamLink'),
+      list: document.getElementById('list'),
+    };
+
+    const fmtTime = ts => ts ? new Date(ts).toLocaleTimeString() : '—';
+    const fmtDelta = ms => ms < 0 ? '—' : `${ms} ms`;
+    const cap = s => (s||'').toString().trim().toUpperCase();
+
+    if (!window.FIREBASE_CONFIG) {
+      ui.status.textContent = 'Missing Firebase config';
+      ui.status.style.background = '#ef4444';
+      throw new Error('Add your Firebase config in firebase-config.js');
+    }
+    const app = initializeApp(window.FIREBASE_CONFIG);
+    const db = getDatabase(app);
+
+    let room = null;
+    let roomRef = null;
+    let pressesRef = null;
+    let hostOnlineRef = null;
+    let unsubRoom = null, unsubPresses = null;
+    let roundStartTs = null;
+
+    function setConnected(on){
+      ui.status.textContent = on ? 'Connected' : 'Disconnected';
+      ui.status.style.background = on ? '#16a34a' : '#334155';
+    }
+
+    async function ensureRoom(r){
+      const rRef = ref(db, `rooms/${r}`);
+      const snap = await get(rRef);
+      if (!snap.exists()){
+        await set(rRef, { createdAt: serverTimestamp(), roundOpen: false, hostOnline: false });
+      }
+      return rRef;
+    }
+
+    function attachListeners(){
+      unsubRoom = onValue(roomRef, (s)=>{
+        const v = s.val()||{};
+        const open = !!v.roundOpen;
+        roundStartTs = v.roundStart || null;
+        ui.roundStatus.textContent = open ? 'Open' : 'Closed';
+        ui.roundStatus.style.color = open ? '#22c55e' : '#94a3b8';
+        ui.roundStart.textContent = fmtTime(roundStartTs);
+        ui.startBtn.disabled = false;
+        ui.stopBtn.disabled = !open;
+        ui.clearBtn.disabled = false;
+      });
+      unsubPresses = onValue(pressesRef, (s)=>{
+        const v = s.val()||{};
+        const items = Object.entries(v).map(([key, val])=>({key, ...val})).sort((a,b)=> (a.at||0)-(b.at||0));
+        renderList(items);
+      });
+    }
+    function detachListeners(){ if (unsubRoom) unsubRoom(); if (unsubPresses) unsubPresses(); unsubRoom = unsubPresses = null; }
+
+    function renderList(items){
+      ui.list.innerHTML = '';
+      const start = roundStartTs || (items[0]?.at || null);
+      items.forEach((it, i)=>{
+        const delta = (it.at && start) ? Math.max(0, it.at - start) : -1;
+        const el = document.createElement('div');
+        el.className = 'item';
+        el.innerHTML = `
+          <div class="idx">${i+1}</div>
+          <div style="flex:1">
+            <div style="font-weight:800">${escapeHtml(it.name || 'Unknown')}</div>
+            <div class="meta">${fmtTime(it.at)} • +${fmtDelta(delta)}</div>
+          </div>`;
+        ui.list.appendChild(el);
+      });
+    }
+    function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+
+    async function joinRoom(){
+      const wanted = cap(ui.roomInput.value || genCode());
+      ui.roomInput.value = wanted;
+      room = wanted;
+      roomRef = await ensureRoom(room);
+      pressesRef = ref(db, `rooms/${room}/presses`);
+      ui.roomLabel.textContent = room;
+      const teamUrl = `${location.origin}${location.pathname.replace(/host\.html$/, 'team.html')}?room=${encodeURIComponent(room)}`;
+      ui.teamLink.textContent = teamUrl;
+      ui.teamLink.onclick = ()=> navigator.clipboard?.writeText(teamUrl);
+      hostOnlineRef = ref(db, `rooms/${room}/hostOnline`);
+      await set(hostOnlineRef, true);
+      try { onDisconnect(hostOnlineRef).set(false); } catch {}
+      setConnected(true);
+      detachListeners();
+      attachListeners();
+    }
+
+    async function startRound(){ if (!roomRef) return; await remove(pressesRef); await update(roomRef, { roundOpen: true, roundStart: serverTimestamp() }); }
+    async function stopRound(){ if (!roomRef) return; await update(roomRef, { roundOpen: false }); }
+    async function clearRound(){ if (!roomRef) return; await remove(pressesRef); }
+
+    ui.joinBtn.addEventListener('click', joinRoom);
+    ui.startBtn.addEventListener('click', startRound);
+    ui.stopBtn.addEventListener('click', stopRound);
+    ui.clearBtn.addEventListener('click', clearRound);
+
+    const params = new URLSearchParams(location.search);
+    const roomParam = cap(params.get('room')||'');
+    if (roomParam) ui.roomInput.value = roomParam;
+
+    function genCode(){ return Array.from(crypto.getRandomValues(new Uint8Array(4))).map(v=>"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[v%32]).join(''); }
+  </script>
+</body>
+</html>

@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Buzzer Team</title>
+  <style>
+    :root{ --bg:#0f172a; --panel:#111827; --muted:#94a3b8; --fg:#e5e7eb; --btn:#1f2937; }
+    html,body{height:100%}
+    body{margin:0; font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:linear-gradient(180deg,#0b1220,#0f172a); color:var(--fg); display:flex; flex-direction:column}
+    header{position:sticky; top:0; z-index:10; background:#0b1220ee; backdrop-filter: blur(6px); border-bottom:1px solid #22304a; padding:10px}
+    .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+    .brand{font-weight:800; letter-spacing:0.4px}
+    .spacer{flex:1}
+    input,button{border:0; border-radius:12px; padding:10px 12px; background:var(--btn); color:var(--fg)}
+    input{min-width:140px}
+    button{font-weight:800}
+
+    main{flex:1; display:flex; align-items:center; justify-content:center; padding:12px}
+    .buzzer{width:min(92vw, 520px); height:min(60vh, 520px); border-radius:999px; border:0; background: radial-gradient(circle at 30% 30%, #ffffff, #e5e7eb 55%, #9ca3af); color:#0f172a; font-size: clamp(32px, 9vw, 64px); box-shadow: 0 18px 50px rgba(148,163,184,0.35), inset 0 -10px 0 rgba(0,0,0,0.25); user-select:none; -webkit-tap-highlight-color: transparent;}
+    .buzzer:active{ transform: translateY(2px); }
+    /* Persistent glow after press until next round */
+    .buzzer.pressed{
+      filter: brightness(1.25);
+      box-shadow: 0 0 48px rgba(255,255,255,0.9), 0 18px 50px rgba(148,163,184,0.35), inset 0 -10px 0 rgba(0,0,0,0.25);
+    }
+    .disabled{ opacity: 0.6; filter: grayscale(0.2); }
+    .chip{background:#1f2937; border:1px solid #2a3a55; padding:6px 10px; border-radius:999px; font-weight:700}
+    .small{font-size:12px; color:var(--muted)}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="row">
+      <div class="brand">Buzzer Team</div>
+      <div class="spacer"></div>
+      <div id="status" class="chip">Disconnected</div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label class="small" for="roomInput">Room</label>
+      <input id="roomInput" placeholder="QUIZ1" />
+      <label class="small" for="nameInput">Name</label>
+      <input id="nameInput" placeholder="Your team name" />
+      <button id="joinBtn">Join</button>
+    </div>
+  </header>
+  <main>
+    <button id="buzzer" class="buzzer disabled" disabled>BUZZ</button>
+  </main>
+
+  <script src="firebase-config.js"></script>
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+    import { getDatabase, ref, push, onValue, serverTimestamp, get } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js';
+
+    const ui = {
+      roomInput: document.getElementById('roomInput'),
+      nameInput: document.getElementById('nameInput'),
+      joinBtn: document.getElementById('joinBtn'),
+      buzzer: document.getElementById('buzzer'),
+      status: document.getElementById('status'),
+    };
+
+    const cap = s => (s||'').toString().trim().toUpperCase();
+    const clean = s => (s||'').toString().trim();
+
+    if (!window.FIREBASE_CONFIG) {
+      ui.status.textContent = 'Missing Firebase config';
+      ui.status.style.background = '#ef4444';
+      throw new Error('Add your Firebase config in firebase-config.js');
+    }
+
+    const app = initializeApp(window.FIREBASE_CONFIG);
+    const db = getDatabase(app);
+
+    let roomRef = null;
+    let pressesRef = null;
+    let hasPressedThisRound = false;
+    let prevOpen = null;
+
+    function setConnected(on){
+      ui.status.textContent = on ? 'Connected' : 'Disconnected';
+      ui.status.style.background = on ? '#16a34a' : '#334155';
+    }
+
+    async function join(){
+      const room = cap(ui.roomInput.value);
+      const name = clean(ui.nameInput.value);
+      if (!room || !name){ alert('Enter room and name'); return; }
+
+      roomRef = ref(db, `rooms/${room}`);
+      const snap = await get(roomRef);
+      if (!snap.exists()){ alert('Room not found. Ask host to create/join it first.'); return; }
+      const hostOnline = (snap.val()||{}).hostOnline === true;
+      if (!hostOnline){ alert('Host is offline. Wait until the host opens the room.'); return; }
+
+      pressesRef = ref(db, `rooms/${room}/presses`);
+      setConnected(true);
+
+      onValue(roomRef, (s)=>{
+        const v = s.val()||{};
+        const open = !!v.roundOpen;
+        const hostUp = v.hostOnline === true;
+        if (prevOpen === false && open === true) { hasPressedThisRound = false; ui.buzzer.classList.remove('pressed'); }
+        prevOpen = open;
+        const canPress = hostUp && open && !hasPressedThisRound;
+        ui.buzzer.disabled = !canPress;
+        ui.buzzer.classList.toggle('disabled', !canPress);
+        if (!hostUp){ ui.status.textContent = 'Host offline'; ui.status.style.background = '#f59e0b'; }
+      });
+
+      // Low-latency press
+      const press = async ()=>{
+        if (hasPressedThisRound) return;
+        // keep glowing until next round
+        ui.buzzer.classList.add('pressed');
+        hasPressedThisRound = true;
+        ui.buzzer.disabled = true;
+        ui.buzzer.classList.add('disabled');
+        try{
+          await push(pressesRef, { name, at: serverTimestamp() });
+          if (navigator.vibrate) navigator.vibrate(80);
+          try{ const AC = window.AudioContext || window.webkitAudioContext; const ctx = new AC(); const o = ctx.createOscillator(); const g = ctx.createGain(); o.frequency.value = 940; o.type='square'; const now = ctx.currentTime; g.gain.setValueAtTime(0.001, now); g.gain.exponentialRampToValueAtTime(0.5, now+0.02); g.gain.exponentialRampToValueAtTime(0.001, now+0.18); o.connect(g).connect(ctx.destination); o.start(now); o.stop(now+0.22);}catch{}
+        }catch(e){ hasPressedThisRound = false; ui.buzzer.disabled = false; ui.buzzer.classList.remove('disabled'); alert('Failed to send press.'); }
+      };
+
+      ui.buzzer.onpointerdown = (e)=>{ e.preventDefault(); press(); };
+    }
+
+    ui.joinBtn.addEventListener('click', join);
+
+    const params = new URLSearchParams(location.search);
+    const r = cap(params.get('room')||'');
+    const n = params.get('name')||'';
+    if (r) ui.roomInput.value = r;
+    if (n) ui.nameInput.value = n;
+  </script>
+</body>
+</html>

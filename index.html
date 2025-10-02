@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Realtime Buzzer</title>
+  <style>
+    body{margin:0; font-family:system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; color:#e5e7eb; background:#0b1220}
+    .wrap{max-width:900px; margin:0 auto; padding:28px}
+    .card{background:#111827; border:1px solid #24364f; border-radius:14px; padding:18px; margin-bottom:16px}
+    a.btn{display:inline-block; padding:12px 14px; border-radius:10px; background:#0ea5e9; color:white; font-weight:800; text-decoration:none}
+    code{background:#0f1a2b; border:1px solid #20324c; padding:2px 6px; border-radius:8px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Realtime Buzzer</h1>
+    <div class="card">
+      <p>Use Host view to manage rounds and see the order of buzzes.</p>
+      <p><a class="btn" href="host.html">Open Host View</a></p>
+    </div>
+    <div class="card">
+      <p>Teams open the Team view on their phones.</p>
+      <p><a class="btn" href="team.html">Open Team View</a></p>
+    </div>
+    <div class="card">
+      <h3>Setup</h3>
+      <ol>
+        <li>In <code>firebase-config.js</code>, paste your Firebase Web App config and ensure databaseURL is set for Realtime Database.</li>
+        <li>In Firebase console, create a Realtime Database (test mode for quick start). Add simple security rules as needed.</li>
+        <li>Host this folder using GitHub Pages or any static hosting.</li>
+      </ol>
+    </div>
+  </div>
+</body>
+</html>
